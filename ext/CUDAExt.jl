@@ -13,6 +13,16 @@ using CUDA_Compiler_jll
 
 public launch
 
+function run_and_collect(cmd)
+    stdout = Pipe()
+    proc = run(pipeline(ignorestatus(cmd); stdout, stderr=stdout), wait=false)
+    close(stdout.in)
+    reader = Threads.@spawn String(read(stdout))
+    Base.wait(proc)
+    log = strip(fetch(reader))
+    return proc, log
+end
+
 """
     check_tile_ir_support()
 
@@ -61,14 +71,29 @@ function emit_binary(cache::CacheView, mi::Core.MethodInstance;
     # Run tileiras to produce CUBIN
     input_path = tempname() * ".tile"
     output_path = tempname() * ".cubin"
+    compiled = false
     try
         write(input_path, bytecode)
         cmd = addenv(`$(CUDA_Compiler_jll.tileiras()) $input_path -o $output_path --gpu-name $(opts.sm_arch) -O$(opts.opt_level)`,
                      "CUDA_ROOT" => CUDA_Compiler_jll.artifact_dir)
-        run(cmd)
+        proc, log = run_and_collect(cmd)
+        if !success(proc)
+            reason = proc.termsignal > 0 ? "tileiras received signal $(proc.termsignal)" :
+                                           "tileiras exited with code $(proc.exitcode)"
+            msg = "Failed to compile Tile IR ($reason)"
+            if !isempty(log)
+                msg *= "\n" * log
+            end
+            msg *= "\nIf you think this is a bug, please file an issue and attach $(input_path)"
+            if parse(Bool, get(ENV, "BUILDKITE", "false"))
+                run(`buildkite-agent artifact upload $(input_path)`)
+            end
+            error(msg)
+        end
+        compiled = true
         res.cuda_bin = read(output_path)
     finally
-        rm(input_path, force=true)
+        compiled && rm(input_path, force=true)
         rm(output_path, force=true)
     end
 
