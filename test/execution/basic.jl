@@ -1357,4 +1357,22 @@ end
     @test Array(c) == (Array(a) .& Array(b)) .| (Array(a) .⊻ Array(b))
 end
 
+@testset "bitwise NOT (~)" begin
+    function bitwise_not_kernel(a::ct.TileArray{Int32,1}, b::ct.TileArray{Int32,1})
+        pid = ct.bid(1)
+        tile = ct.load(a, pid, (16,))
+        ct.store(b, pid, map(~, tile))
+        return
+    end
+
+    n = 1024
+    tile_size = 16
+    a = CuArray(rand(Int32(0):Int32(0x7fff_ffff), n))
+    b = CUDA.zeros(Int32, n)
+
+    ct.launch(bitwise_not_kernel, cld(n, tile_size), a, b)
+
+    @test Array(b) == .~Array(a)
+end
+
 end
