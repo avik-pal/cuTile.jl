@@ -885,6 +885,12 @@ end
         @test Array(C) ≈ Array(A) .+ Array(B)
     end
 
+    @testset "ct.@. expands to Tiled" begin
+        ex = @macroexpand ct.@. C = A + B
+        # The macro should produce Tiled() wrapping, not plain dotted calls
+        @test occursin("Tiled", string(ex))
+    end
+
     @testset "ct.@. in-place" begin
         n = 1024
         A = CUDA.rand(Float32, n)

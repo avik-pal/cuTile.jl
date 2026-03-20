@@ -38,7 +38,7 @@ include("language/math.jl")
 include("language/operations.jl")
 include("language/atomics.jl")
 
-public launch, Tiled, ByTarget, @compiler_options, var"@."
+public launch, Tiled, ByTarget, @compiler_options, @.
 launch(args...) = error("Please import CUDA.jl before using `cuTile.launch`.")
 
 """
@@ -88,7 +88,7 @@ the broadcast through cuTile kernels.
     ct.@. C = A + sin(B)
     # equivalent to: Tiled(C) .= Tiled(A) .+ sin.(Tiled(B))
 """
-macro var"."(ex)
+macro __dot__(ex)
     esc(_wrap_tiled(Base.Broadcast.__dot__(ex)))
 end
 
