@@ -106,9 +106,7 @@ function _tiled_broadcast!(dest::AbstractArray{T,N}, bc::Broadcasted) where {T, 
 
     ts = _compute_tile_sizes(size(dest))
     grid = ntuple(i -> cld(size(dest, i), ts[i]), N)
-
-    launch_grid = N <= 3 ? grid : (grid[1], grid[2], prod(grid[i] for i in 3:N))
-    overflow = N > 3 ? grid[3:end] : ()
+    launch_grid, overflow = _flatten_grid(grid)
 
     launch(_tiled_bc_kernel, launch_grid, dest_ta, tiled_bc,
            Constant(ts), Constant(overflow))
@@ -128,37 +126,16 @@ function _to_tiled_bc(bc::Broadcasted)
 end
 
 #=============================================================================
- Broadcast kernel — evaluates Broadcasted tree on tiles
+ Broadcast kernel — single @generated method for all dimensionalities
 =============================================================================#
 
 @generated function _tiled_bc_kernel(dest::TileArray{T, N}, bc, tile_size, overflow_grids) where {T, N}
-    body = Expr[]
-    bid_vars = [Symbol("bid_$d") for d in 1:N]
-
-    if N <= 3
-        for d in 1:N
-            push!(body, :($(bid_vars[d]) = cuTile.bid($d)))
-        end
-    else
-        push!(body, :($(bid_vars[1]) = cuTile.bid(1)))
-        push!(body, :($(bid_vars[2]) = cuTile.bid(2)))
-        push!(body, :(_rem = cuTile.bid(3) - Int32(1)))
-        for d in 3:N
-            if d < N
-                push!(body, :($(bid_vars[d]) = rem(_rem, Int32(overflow_grids[$(d-2)])) + Int32(1)))
-                push!(body, :(_rem = fld(_rem, Int32(overflow_grids[$(d-2)]))))
-            else
-                push!(body, :($(bid_vars[d]) = _rem + Int32(1)))
-            end
-        end
+    quote
+        bids = _unflatten_bids(Val{$N}(), overflow_grids)
+        result = _eval_bc(bc, bids, tile_size)
+        store(dest, bids, convert(Tile{$T}, result))
+        return
     end
-
-    idx = N == 1 ? bid_vars[1] : Expr(:tuple, bid_vars...)
-    push!(body, :(result = _eval_bc(bc, $idx, tile_size)))
-    push!(body, :(result_converted = convert(cuTile.Tile{$T}, result)))
-    push!(body, :(cuTile.store(dest, $idx, result_converted)))
-    push!(body, :(return))
-    Expr(:block, body...)
 end
 
 #=============================================================================
@@ -179,26 +156,3 @@ end
 @inline _eval_bc_args(args::Tuple, bid, tile_size) =
     (_eval_bc(args[1], bid, tile_size), _eval_bc_args(Base.tail(args), bid, tile_size)...)
 
-#=============================================================================
- Tile sizing
-=============================================================================#
-
-"""
-    _compute_tile_sizes(dest_size; budget=4096)
-
-Distribute a total element budget greedily across dimensions, skipping singletons.
-Each tile dimension is a power of 2, capped by the array size in that dimension.
-"""
-function _compute_tile_sizes(dest_size::NTuple{N,Int}; budget::Int=4096) where N
-    ts = ones(Int, N)
-    remaining = budget
-    for i in 1:N
-        s = dest_size[i]
-        s == 1 && continue
-        t = prevpow(2, min(remaining, s))
-        ts[i] = t
-        remaining = remaining ÷ t
-        remaining < 2 && break
-    end
-    return NTuple{N,Int}(ts)
-end
