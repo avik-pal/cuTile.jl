@@ -49,10 +49,11 @@ function _mapreducedim!(f, op, R::AbstractArray, A::AbstractArray, reduce_dims::
     N = ndims(A)
     src_ta = TileArray(A)
 
-    # Non-reduced dims first (parallelism), then reduced dims (fewer loop iterations)
-    non_red = [d for d in 1:N if !(d in reduce_dims)]
+    # Reduced dims first (larger tiles enable better hardware reduction),
+    # then non-reduced dims (parallelized across blocks anyway)
     red = [d for d in 1:N if d in reduce_dims]
-    ts = _compute_tile_sizes(size(A), Iterators.flatten((non_red, red)))
+    non_red = [d for d in 1:N if !(d in reduce_dims)]
+    ts = _compute_tile_sizes(size(A), Iterators.flatten((red, non_red)))
 
     pad_mode = _padding_for_neutral(init)
     if pad_mode === nothing
