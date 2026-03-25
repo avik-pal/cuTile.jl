@@ -3,6 +3,64 @@
 # Core types (CGVal, CGCtx) and helper functions for Tile IR code generation.
 
 #=============================================================================
+ Type-safe shape wrappers: Julia (column-major) ↔ Tile IR (row-major)
+=============================================================================#
+
+# Tile IR is natively row-major: shapes are stored with the slowest-varying dimension first.
+# Julia is column-major: shapes are stored with the fastest-varying dimension first.
+# Converting between them is a simple reversal. The Shape{O} wrapper ensures we don't
+# accidentally mix up conventions — IR operations accept only RowMajorShape, while
+# user-facing shapes from Julia are ColMajorShape.
+
+abstract type StorageOrder end
+struct RowMajor <: StorageOrder end
+struct ColMajor <: StorageOrder end
+
+struct Shape{O<:StorageOrder}
+    dims::Vector{Int}
+end
+
+const RowMajorShape = Shape{RowMajor}
+const ColMajorShape = Shape{ColMajor}
+
+# Conversion constructors
+RowMajorShape(s::RowMajorShape) = s
+RowMajorShape(s::ColMajorShape) = RowMajorShape(reverse(s.dims))
+RowMajorShape(t::Tuple) = RowMajorShape(ColMajorShape(collect(Int, t)))
+
+ColMajorShape(s::ColMajorShape) = s
+ColMajorShape(s::RowMajorShape) = ColMajorShape(reverse(s.dims))
+ColMajorShape(t::Tuple) = ColMajorShape(collect(Int, t))
+
+# Forward common operations to .dims
+Base.length(s::Shape) = length(s.dims)
+Base.isempty(s::Shape) = isempty(s.dims)
+Base.getindex(s::Shape, i) = s.dims[i]
+Base.setindex!(s::Shape, v, i) = (s.dims[i] = v; s)
+Base.copy(s::Shape{O}) where O = Shape{O}(copy(s.dims))
+Base.:(==)(a::Shape{O}, b::Shape{O}) where O = a.dims == b.dims
+Base.iterate(s::Shape, state...) = iterate(s.dims, state...)
+Base.eachindex(s::Shape) = eachindex(s.dims)
+Base.collect(s::Shape) = s.dims
+TupleType(s::Shape) = Tuple{s.dims...}
+
+# Scalar (0-D) shape — storage order is irrelevant for zero dimensions
+struct ScalarShape end
+Base.length(::ScalarShape) = 0
+Base.isempty(::ScalarShape) = true
+Base.collect(::ScalarShape) = Int[]
+TupleType(::ScalarShape) = Tuple{}
+
+Base.:(==)(::ScalarShape, ::ScalarShape) = true
+Base.:(==)(::ScalarShape, ::Shape) = false
+Base.:(==)(::Shape, ::ScalarShape) = false
+
+# Cross-type conversions (must be after ScalarShape definition)
+ColMajorShape(::ScalarShape) = ColMajorShape(Int[])
+
+const TileShape = Union{RowMajorShape, ScalarShape}
+
+#=============================================================================
  IRError: Exception type for IR compilation errors
 =============================================================================#
 
@@ -69,7 +127,7 @@ struct CGVal
     v::Union{Value, Vector{Value}, Nothing}  # Single value, multi-value, or nothing
     type_id::Union{TypeId, Nothing}  # Tile IR type (nothing for lazy refs or multi-value)
     jltype::Any               # Original Julia type
-    shape::Vector{Int}        # Tile shape (empty for scalars)
+    shape::TileShape        # Tile shape (ScalarShape for scalars)
     # Lazy argument reference: (arg_idx, [field_indices...])
     # e.g., (1, [2, 1]) means "argument 1, field 2, sub-field 1"
     arg_ref::Union{Tuple{Int, Vector{Int}}, Nothing}
@@ -79,18 +137,18 @@ end
 
 # Convenience constructors for concrete values
 CGVal(v::Value, type_id::TypeId, @nospecialize(jltype)) =
-    CGVal(v, type_id, jltype, Int[], nothing, nothing, nothing)
+    CGVal(v, type_id, jltype, ScalarShape(), nothing, nothing, nothing)
 
-CGVal(v::Value, type_id::TypeId, @nospecialize(jltype), shape::Vector{Int}) =
+CGVal(v::Value, type_id::TypeId, @nospecialize(jltype), shape::TileShape) =
     CGVal(v, type_id, jltype, shape, nothing, nothing, nothing)
 
 # Constructor for multi-value results (from loops, ifs)
 CGVal(v::Vector{Value}, @nospecialize(jltype)) =
-    CGVal(v, nothing, jltype, Int[], nothing, nothing, nothing)
+    CGVal(v, nothing, jltype, ScalarShape(), nothing, nothing, nothing)
 
 # Constructor for lazy argument references
 function arg_ref_value(arg_idx::Int, chain::Vector{Int}, @nospecialize(jltype))
-    CGVal(nothing, nothing, jltype, Int[], (arg_idx, chain), nothing, nothing)
+    CGVal(nothing, nothing, jltype, ScalarShape(), (arg_idx, chain), nothing, nothing)
 end
 
 """
@@ -99,8 +157,8 @@ end
 Create a ghost value (zero-size singleton with no runtime representation).
 Optionally stores a compile-time constant value.
 """
-ghost_value(@nospecialize(jltype)) = CGVal(nothing, TypeId(-1), jltype, Int[], nothing, nothing, nothing)
-ghost_value(@nospecialize(jltype), constant) = CGVal(nothing, TypeId(-1), jltype, Int[], nothing, Some(constant), nothing)
+ghost_value(@nospecialize(jltype)) = CGVal(nothing, TypeId(-1), jltype, ScalarShape(), nothing, nothing, nothing)
+ghost_value(@nospecialize(jltype), constant) = CGVal(nothing, TypeId(-1), jltype, ScalarShape(), nothing, Some(constant), nothing)
 
 """
     tuple_value(jltype, component_refs, component_constants) -> CGVal
@@ -115,7 +173,7 @@ function tuple_value(@nospecialize(jltype), component_refs::Vector{Any}, compone
     else
         nothing
     end
-    CGVal(nothing, TypeId(-1), jltype, Int[], nothing, constant, component_refs)
+    CGVal(nothing, TypeId(-1), jltype, ScalarShape(), nothing, constant, component_refs)
 end
 
 """
@@ -382,15 +440,15 @@ function _tile_type_for_julia!(tt::TypeTable, @nospecialize(T::Type))
             throw(IRError("Tile shape must be a tuple, got: $shape_param"))
         end
         elem_dtype = julia_to_tile_dtype!(tt, eltype(T))
-        shape = collect(Int, shape_param)
-        return tile_type!(tt, elem_dtype, shape)
+        shape = RowMajorShape(shape_param)
+        return tile_type!(tt, elem_dtype, collect(shape))
     end
 
     return nothing
 end
 
 """
-    tile_type_and_shape_for_julia!(ctx, T) -> (TypeId, Vector{Int})
+    tile_type_and_shape_for_julia!(ctx, T) -> (TypeId, RowMajorShape)
 
 Get the Tile IR type and shape for a Julia type.
 """
@@ -398,11 +456,11 @@ function tile_type_and_shape_for_julia!(ctx::CGCtx, @nospecialize(T))
     actual_type = CC.widenconst(T)
     type_id = tile_type_for_julia!(ctx, actual_type)
 
-    # Extract shape from Tile types
+    # Extract shape from Tile types (in Tile IR row-major order)
     shape = if actual_type <: Tile
-        collect(Int, size(actual_type))
+        RowMajorShape(size(actual_type))
     else
-        Int[]
+        ScalarShape()
     end
 
     return (type_id, shape)
@@ -489,14 +547,15 @@ end
 #-----------------------------------------------------------------------------
 
 """
-    extract_tile_shape(T) -> Vector{Int}
+    extract_tile_shape(T) -> RowMajorShape
 
-Extract shape from a Tile{T, Shape} type, returning Int[] if not a Tile type.
+Extract shape from a Tile{T, Shape} type in Tile IR (row-major) order.
+Returns empty shape if not a Tile type.
 """
 function extract_tile_shape(@nospecialize(T))
     T = CC.widenconst(T)
     if T <: Tile
-        return collect(Int, size(T))
+        return RowMajorShape(size(T))
     end
-    Int[]
+    ScalarShape()
 end
