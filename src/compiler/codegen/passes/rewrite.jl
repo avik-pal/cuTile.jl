@@ -35,7 +35,7 @@ Imperative rewrite node (MLIR-inspired). The function is called with
 """
 struct RFunc <: RewriteNode; func::Function; end
 
-struct RewriteRule; lhs::PCall; rhs::Union{RewriteNode, RFunc}; end
+struct RewriteRule; lhs::PCall; rhs::RewriteNode; end
 
 resolve_func(pat::PCall) = getfield(Intrinsics, pat.func_name)
 root_func(rule::RewriteRule) = resolve_func(rule.lhs)
