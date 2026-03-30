@@ -145,13 +145,10 @@ function emit_kernel!(writer::BytecodeWriter, func_buf::Vector{UInt8},
     # ReturnNode terminators to YieldOp, which the token pass then extends.
     hoist_returns!(ctx.sci.entry)
 
-    # Normalize Julia Core intrinsics to cuTile Intrinsics equivalents.
+    # Rewrite passes: normalize Core intrinsics, then optimize.
+    # Normalization must precede SVE/FMA since they match cuTile Intrinsics.
     normalize_ir!(sci)
-
-    # Eliminate redundant to_scalar/from_scalar chains from broadcast wrapping.
     scalar_view_elim_pass!(sci)
-
-    # Fuse mul+add/sub into fma to reduce register pressure.
     fma_fusion_pass!(sci)
 
 
