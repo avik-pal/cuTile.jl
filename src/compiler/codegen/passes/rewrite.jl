@@ -34,33 +34,55 @@ struct RConst <: RewriteNode; val::Any; end
     RFunc(func)
 
 Imperative rewrite node (MLIR-inspired). The function is called with
-`(sci, block, inst, match)` and returns `true` if the rewrite was applied,
-`false` to skip this rule and try the next one.
+`(sci, block, inst, match, ctx)` and returns `true` if the rewrite was applied,
+`false` to skip this rule and try the next one. `ctx` is the `MatchContext`
+providing def-chain lookups via `ctx.defs`.
 """
 struct RFunc <: RewriteNode; func::Function; end
 
-struct RewriteRule; lhs::PCall; rhs::RewriteNode; end
+struct RewriteRule
+    lhs::PCall
+    rhs::RewriteNode
+    guard::Union{Function, Nothing}  # (match, ctx) -> Bool, or nothing
+end
+RewriteRule(lhs::PCall, rhs::RewriteNode) = RewriteRule(lhs, rhs, nothing)
 
 root_func(rule::RewriteRule) = rule.lhs.func
 
 #=============================================================================
- @rewrite Macro
+ @rewrite / @rewriter Macros
 =============================================================================#
 
 """
     @rewrite lhs => rhs
+    @rewrite(lhs => rhs, guard)
 
 Compile a declarative rewrite rule. LHS: `func(args...)` matches calls,
-`~x` binds, `~x::T` binds with type constraint (MLIR's typed operand),
+`~x` binds (repeated names require equality), `~x::T` binds with type constraint,
 `one_use(pat)` requires single use. RHS: `func(args...)` emits calls,
-`~x` references bindings, `\$(expr)` injects a literal constant
-(MLIR's `ConstantAttr` equivalent). Function names are resolved in the caller's
-scope, so use qualified names (e.g. `Intrinsics.addf`, `Core.Intrinsics.add_int`).
+`~x` references bindings, `\$(expr)` injects a literal constant.
+Optional `guard` is a function `(match, ctx) -> Bool` checked after pattern match.
 """
-macro rewrite(ex)
+macro rewrite(ex, guard=nothing)
     ex isa Expr && ex.head === :call && ex.args[1] === :(=>) ||
         error("@rewrite expects: lhs => rhs")
-    esc(:(RewriteRule($(_compile_lhs(ex.args[2])), $(_compile_rhs(ex.args[3])))))
+    g = guard === nothing ? :nothing : guard
+    esc(:(RewriteRule($(_compile_lhs(ex.args[2])), $(_compile_rhs(ex.args[3])), $g)))
+end
+
+"""
+    @rewriter lhs => func
+
+Declarative pattern with imperative rewrite. LHS uses the same pattern syntax as
+`@rewrite`. RHS is a function `(sci, block, inst, match, ctx) -> Bool` that
+performs the rewrite and returns `true`, or returns `false` to skip and try the
+next rule. Matched bindings are in `match.bindings`; def-chain lookups via
+`ctx.defs`.
+"""
+macro rewriter(ex)
+    ex isa Expr && ex.head === :call && ex.args[1] === :(=>) ||
+        error("@rewriter expects: lhs => func")
+    esc(:(RewriteRule($(_compile_lhs(ex.args[2])), RFunc($(ex.args[3])))))
 end
 
 function _compile_lhs(ex)
@@ -130,6 +152,18 @@ _is_transparent(func) = func === Intrinsics.to_scalar ||
                          func === Intrinsics.from_scalar ||
                          func === Intrinsics.broadcast
 
+"""Merge bindings, requiring repeated names to bind the same value (=== equality)."""
+function _merge_bindings!(dest::Dict{Symbol,Any}, src::Dict{Symbol,Any})
+    for (k, v) in src
+        if haskey(dest, k)
+            dest[k] === v || return false
+        else
+            dest[k] = v
+        end
+    end
+    return true
+end
+
 function pattern_match(ctx::MatchContext, @nospecialize(val), pat::PCall)
     val isa SSAValue || return nothing
     entry = get(ctx.defs, val.id, nothing)
@@ -140,7 +174,7 @@ function pattern_match(ctx::MatchContext, @nospecialize(val), pat::PCall)
         for (op, sub) in zip(entry.operands, pat.operands)
             m = pattern_match(ctx, op, sub)
             m === nothing && return nothing
-            merge!(result.bindings, m.bindings)
+            _merge_bindings!(result.bindings, m.bindings) || return nothing
             append!(result.matched_ssas, m.matched_ssas)
         end
         return result
@@ -197,7 +231,7 @@ end
 
 function _apply_rewrite!(sci, block, inst, rule, match, ctx, consumed)
     if rule.rhs isa RFunc
-        rule.rhs.func(sci, block, inst, match) || return false
+        rule.rhs.func(sci, block, inst, match, ctx) || return false
         return true
     elseif rule.rhs isa RBind
         # Forwarding: replace all uses of root with the bound value, delete root
@@ -266,6 +300,7 @@ function rewrite_patterns!(sci::StructuredIRCode, rules::Vector{RewriteRule})
                 m = pattern_match(ctx, SSAValue(inst), rule.lhs)
                 m === nothing && continue
                 any(s in consumed for s in m.matched_ssas) && continue
+                rule.guard !== nothing && !rule.guard(m, ctx) && continue
                 result = _apply_rewrite!(sci, block, inst, rule, m, ctx, consumed)
                 result === false && continue  # RFunc declined, try next rule
                 union!(consumed, m.matched_ssas)

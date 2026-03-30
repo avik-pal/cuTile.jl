@@ -85,14 +85,28 @@ scalar_view_elim_pass!(sci::StructuredIRCode) = rewrite_patterns!(sci, SVE_RULES
 
 # mul+add/sub → fma to reduce register pressure.
 # Mirrors cuTile Python's fuse_mul_addsub in rewrite_patterns.py.
+#
+# Two rule variants per pattern: 2-arg (default RM/FTZ from normalization) and
+# 4-arg (explicit RM/FTZ). Repeated binds ~rm/~ftz enforce consistency between
+# mul and add/sub — mismatched flags cause the pattern match to fail, preventing
+# incorrect fusion.
 
 const FMA_RULES = RewriteRule[
+    # Default RM/FTZ (2-arg forms from normalization)
     @rewrite Intrinsics.addf(one_use(Intrinsics.mulf(~x, ~y)), ~z) =>
             Intrinsics.fma(~x, ~y, ~z)
     @rewrite Intrinsics.addf(~z, one_use(Intrinsics.mulf(~x, ~y))) =>
             Intrinsics.fma(~x, ~y, ~z)
     @rewrite Intrinsics.subf(one_use(Intrinsics.mulf(~x, ~y)), ~z) =>
             Intrinsics.fma(~x, ~y, Intrinsics.negf(~z))
+
+    # Explicit RM/FTZ: repeated ~rm/~ftz binds require mul and add/sub to agree
+    @rewrite Intrinsics.addf(one_use(Intrinsics.mulf(~x, ~y, ~rm, ~ftz)), ~z, ~rm, ~ftz) =>
+            Intrinsics.fma(~x, ~y, ~z, ~rm, ~ftz)
+    @rewrite Intrinsics.addf(~z, one_use(Intrinsics.mulf(~x, ~y, ~rm, ~ftz)), ~rm, ~ftz) =>
+            Intrinsics.fma(~x, ~y, ~z, ~rm, ~ftz)
+    @rewrite Intrinsics.subf(one_use(Intrinsics.mulf(~x, ~y, ~rm, ~ftz)), ~z, ~rm, ~ftz) =>
+            Intrinsics.fma(~x, ~y, Intrinsics.negf(~z), ~rm, ~ftz)
 ]
 
 fma_fusion_pass!(sci::StructuredIRCode) = rewrite_patterns!(sci, FMA_RULES)
