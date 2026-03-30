@@ -22,6 +22,7 @@ using Core: SSAValue
 abstract type PatternNode end
 struct PCall <: PatternNode; func::Any; operands::Vector{PatternNode}; end
 struct PBind <: PatternNode; name::Symbol; end
+struct PTypedBind <: PatternNode; name::Symbol; type::Type; end
 struct POneUse <: PatternNode; inner::PatternNode; end
 
 abstract type RewriteNode end
@@ -50,8 +51,9 @@ root_func(rule::RewriteRule) = rule.lhs.func
     @rewrite lhs => rhs
 
 Compile a declarative rewrite rule. LHS: `func(args...)` matches calls,
-`~x` binds, `one_use(pat)` requires single use. RHS: `func(args...)` emits
-calls, `~x` references bindings, `\$(expr)` injects a literal constant
+`~x` binds, `~x::T` binds with type constraint (MLIR's typed operand),
+`one_use(pat)` requires single use. RHS: `func(args...)` emits calls,
+`~x` references bindings, `\$(expr)` injects a literal constant
 (MLIR's `ConstantAttr` equivalent). Function names are resolved in the caller's
 scope, so use qualified names (e.g. `Intrinsics.addf`, `Core.Intrinsics.add_int`).
 """
@@ -64,7 +66,13 @@ end
 function _compile_lhs(ex)
     ex isa Expr && ex.head === :call || error("@rewrite LHS: expected call, got $ex")
     f = ex.args[1]
-    f === :~ && return :(PBind($(QuoteNode(ex.args[2]))))
+    if f === :~
+        inner = ex.args[2]
+        if inner isa Expr && inner.head === :(::)
+            return :(PTypedBind($(QuoteNode(inner.args[1])), $(inner.args[2])))
+        end
+        return :(PBind($(QuoteNode(inner))))
+    end
     f === :one_use && return :(POneUse($(_compile_lhs(ex.args[2]))))
     :(PCall($f, PatternNode[$(_compile_lhs.(ex.args[2:end])...)]))
 end
@@ -96,6 +104,7 @@ struct DefEntry
 end
 
 struct MatchContext
+    entry::Block      # root block of the StructuredIRCode (for value_type lookups)
     defs::Dict{Int, DefEntry}
     use_index  # UseIndex from IRStructurizer
 end
@@ -110,7 +119,7 @@ function MatchContext(sci::StructuredIRCode)
             defs[inst.ssa_idx] = DefEntry(block, inst, func, collect(Any, operands))
         end
     end
-    MatchContext(defs, uses(sci.entry))
+    MatchContext(sci.entry, defs, uses(sci.entry))
 end
 
 _use_count(ctx::MatchContext, val::SSAValue) =
@@ -161,6 +170,13 @@ end
 
 pattern_match(ctx::MatchContext, @nospecialize(val), pat::PBind) =
     MatchResult(Dict{Symbol,Any}(pat.name => val), Int[])
+
+function pattern_match(ctx::MatchContext, @nospecialize(val), pat::PTypedBind)
+    T = value_type(ctx.entry, val)
+    T === nothing && return nothing
+    CC.widenconst(T) <: pat.type || return nothing
+    MatchResult(Dict{Symbol,Any}(pat.name => val), Int[])
+end
 
 function pattern_match(ctx::MatchContext, @nospecialize(val), pat::POneUse)
     val isa SSAValue && _use_count(ctx, val) == 1 || return nothing
