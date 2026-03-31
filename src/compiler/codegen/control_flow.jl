@@ -91,8 +91,8 @@ function emit_for_op!(ctx::CGCtx, op::ForOp, @nospecialize(parent_result_type), 
 
     (lower_tv === nothing || upper_tv === nothing || step_tv === nothing) &&
         throw(IRError("Cannot resolve ForOp bounds"))
-    lower_tv.jltype === upper_tv.jltype === step_tv.jltype ||
-        throw(IRError("ForOp bounds must all have the same type"))
+    eltype(CC.widenconst(lower_tv.jltype)) === eltype(CC.widenconst(upper_tv.jltype)) === eltype(CC.widenconst(step_tv.jltype)) ||
+        throw(IRError("ForOp bounds must all have the same element type"))
     iv_jl_type = lower_tv.jltype
     iv_type = tile_type_for_julia!(ctx, iv_jl_type)
 

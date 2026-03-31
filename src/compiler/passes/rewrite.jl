@@ -161,7 +161,7 @@ end
 function _def_operands(entry::DefEntry)
     pos = findfirst(==(entry.val.id), entry.block.body.ssa_idxes)
     pos === nothing && return Any[]
-    call = resolve_call(entry.block.body.stmts[pos])
+    call = resolve_call(entry.block, entry.block.body.stmts[pos])
     call === nothing && return Any[]
     _, ops = call
     return ops
@@ -180,9 +180,7 @@ _use_count(driver::RewriteDriver, val::SSAValue) =
     length(uses(driver.sci.entry, val))
 
 # Codegen no-ops that pattern matching traces through transparently.
-_is_transparent(func) = func === Intrinsics.to_scalar ||
-                         func === Intrinsics.from_scalar ||
-                         func === Intrinsics.broadcast
+_is_transparent(func) = func === Intrinsics.broadcast
 
 #=============================================================================
  Notifications
@@ -219,7 +217,7 @@ end
 """Register a newly inserted instruction."""
 function _notify_insert!(driver::RewriteDriver, block::Block, inst::Instruction)
     val = SSAValue(inst)
-    call = resolve_call(inst)
+    call = resolve_call(block, inst)
     call === nothing && return
     func, _ = call
     driver.defs[val] = DefEntry(block, val, func)
@@ -385,7 +383,7 @@ function rewrite_patterns!(sci::StructuredIRCode, rules::Vector{RewriteRule};
     defs = Dict{SSAValue, DefEntry}()
     for block in eachblock(sci)
         for inst in instructions(block)
-            call = resolve_call(inst)
+            call = resolve_call(block, inst)
             call === nothing && continue
             func, _ = call
             val = SSAValue(inst)
@@ -423,7 +421,7 @@ function rewrite_patterns!(sci::StructuredIRCode, rules::Vector{RewriteRule};
         # so the mulf reads as single-use). Full DCE handles the rest.
         if _use_count(driver, val) == 0
             stmt = entry.block.body.stmts[pos]
-            if !must_keep(stmt)
+            if !must_keep(entry.block, stmt)
                 _erase_op!(driver, entry)
                 continue
             end

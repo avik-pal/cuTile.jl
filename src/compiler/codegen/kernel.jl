@@ -100,8 +100,13 @@ function emit_kernel!(writer::BytecodeWriter, func_buf::Vector{UInt8},
                 throw(IRError("Expected exactly one value for argument $arg_idx, got $(length(values))"))
             end
             val = values[1]
-            type_id = tile_type_for_julia!(ctx, sci.argtypes[arg_idx])
-            tv = CGVal(val, type_id, sci.argtypes[arg_idx])
+            argtype = CC.widenconst(sci.argtypes[arg_idx])
+            type_id = tile_type_for_julia!(ctx, argtype)
+            # Promote scalar kernel args to 0D tile jltype at the boundary.
+            # sci.argtypes retains the Julia signature (Int32), but the IR
+            # body is uniformly tile-typed after scalar_elim_pass!.
+            jltype = argtype <: Number ? Tile{argtype, Tuple{}} : sci.argtypes[arg_idx]
+            tv = CGVal(val, type_id, jltype)
             ctx[SlotNumber(arg_idx)] = tv
             ctx[Argument(arg_idx)] = tv
         end
@@ -116,10 +121,10 @@ function emit_kernel!(writer::BytecodeWriter, func_buf::Vector{UInt8},
             T = typeof(val)
             type_id = tile_type_for_julia!(ctx, T; throw_error=false)
             if type_id !== nothing
-                # Scalar: emit ConstantOp
+                # Primitive: emit ConstantOp (jltype promoted to 0D tile)
                 bytes = constant_to_bytes(val, T)
                 v = encode_ConstantOp!(ctx.cb, type_id, bytes)
-                tv = CGVal(v, type_id, T, ScalarShape(), nothing, Some(val), nothing)
+                tv = CGVal(v, type_id, Tile{T, Tuple{}}, ScalarShape(), nothing, Some(val), nothing)
             else
                 # Non-primitive (tuple etc.): ghost with constant
                 tv = ghost_value(T, val)
@@ -293,12 +298,7 @@ function emit_subprogram!(ctx::CGCtx, func, arg_types::Vector,
     # 1. Resolve method instance
     argtuple = Tuple{arg_types...}
     world = ctx.cache.world
-    mi = @something(
-        match_method_instance(func, argtuple;
-                              world, method_table=cuTileMethodTable),
-        match_method_instance(func, argtuple; world),
-        error("No method found for $func($(join(arg_types, ", ")))")
-    )
+    mi = lookup_method_instance(func, argtuple; world)
 
     # 2. Compile through cuTile pipeline (cached)
     if !haskey(ctx.cache, mi)
@@ -309,7 +309,7 @@ function emit_subprogram!(ctx::CGCtx, func, arg_types::Vector,
     old_hook = compile_hook[]
     compile_hook[] = nothing
     sci, _, _ = try
-        emit_ir(ctx.cache, mi)
+        emit_structured!(ctx.cache, mi)
     finally
         compile_hook[] = old_hook
     end
@@ -328,6 +328,10 @@ function emit_subprogram!(ctx::CGCtx, func, arg_types::Vector,
     n_argtypes = length(sci.argtypes)
     block_idx = 1  # cursor into block_args
 
+    # Helper to promote scalar arg types to 0D tile at the boundary.
+    # sci.argtypes retains the Julia signature; the IR body is tile-typed.
+    _arg_jltype(T) = let U = CC.widenconst(T); U <: Number ? Tile{U, Tuple{}} : T end
+
     if mi.def.isva
         # Varargs: fixed argtypes are 1:n_argtypes-1, last is the varargs tuple.
         # Map fixed args (ghost or non-ghost), then pack remaining block_args
@@ -337,7 +341,7 @@ function emit_subprogram!(ctx::CGCtx, func, arg_types::Vector,
             if is_ghost_type(CC.widenconst(argtype))
                 sub_ctx[Argument(i)] = ghost_value(argtype)
             else
-                sub_ctx[Argument(i)] = CGVal(block_args[block_idx], block_type_ids[block_idx], arg_types[block_idx])
+                sub_ctx[Argument(i)] = CGVal(block_args[block_idx], block_type_ids[block_idx], _arg_jltype(arg_types[block_idx]))
                 block_idx += 1
             end
         end
@@ -345,7 +349,7 @@ function emit_subprogram!(ctx::CGCtx, func, arg_types::Vector,
         va_offset = n_argtypes + length(block_args)  # high indices to avoid collision
         tuple_components = Any[]
         for j in block_idx:length(block_args)
-            sub_ctx[Argument(va_offset + j - block_idx + 1)] = CGVal(block_args[j], block_type_ids[j], arg_types[j])
+            sub_ctx[Argument(va_offset + j - block_idx + 1)] = CGVal(block_args[j], block_type_ids[j], _arg_jltype(arg_types[j]))
             push!(tuple_components, Argument(va_offset + j - block_idx + 1))
         end
         constants = Vector{Any}(fill(nothing, length(tuple_components)))
@@ -356,7 +360,7 @@ function emit_subprogram!(ctx::CGCtx, func, arg_types::Vector,
             if is_ghost_type(CC.widenconst(argtype))
                 sub_ctx[Argument(i)] = ghost_value(argtype)
             else
-                sub_ctx[Argument(i)] = CGVal(block_args[block_idx], block_type_ids[block_idx], arg_types[block_idx])
+                sub_ctx[Argument(i)] = CGVal(block_args[block_idx], block_type_ids[block_idx], _arg_jltype(arg_types[block_idx]))
                 block_idx += 1
             end
         end
