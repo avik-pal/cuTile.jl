@@ -458,6 +458,9 @@ function apply_rewrite!(driver::RewriteDriver, block, val::SSAValue, rule, match
         typ = block.body.types[pos]
         operands = Any[resolve_rhs(driver, block, val, op, match.bindings, typ)
                        for op in rule.rhs.operands]
+        # Recompute pos: resolve_rhs may insert instructions before val
+        # (e.g. negf in subf→fma), shifting positions.
+        pos = findfirst(==(val.id), block.body.ssa_idxes)
         block.body.stmts[pos] = Expr(:call, rule.rhs.func, operands...)
         # Update defs, re-add self and users to worklist (statement changed)
         driver.defs[val] = DefEntry(block, val, rule.rhs.func)
