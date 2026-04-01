@@ -43,29 +43,16 @@ fma_fusion_pass!(sci::StructuredIRCode) = rewrite_patterns!(sci, FMA_RULES)
 # Cancel inverse addi/subi pairs: x+c-c → x, x-c+c → x.
 # Repeated ~c binds enforce that both operands are the same value.
 
-# Guard: check that ~c0 and ~c1 resolve to the same constant value.
-# Like MLIR's ConstantLikeMatcher: matches on attribute value, not SSA identity.
-function same_const(match, driver)
-    c0 = match.bindings[:c0]
-    c1 = match.bindings[:c1]
-    v0 = _const_scalar(driver.constants, c0)
-    v1 = _const_scalar(driver.constants, c1)
-    v0 !== nothing && v1 !== nothing && v0 == v1
-end
-
-# Resolve an SSA value or literal to its scalar constant, or nothing.
-function _const_scalar(constants, @nospecialize(op))
-    if op isa Number
-        return op
-    elseif op isa SSAValue
-        c = get(constants, op, nothing)
-        c isa AbstractArray || return nothing
-        isempty(c) && return nothing
-        v = first(c)
-        all(==(v), c) && return v
-        return nothing
+# Guard factory: check that the given bindings all resolve to the same constant
+# value. Like MLIR's ConstantLikeMatcher: matches on attribute value, not SSA
+# identity. Returns a guard function for use with @rewrite.
+function same_const(keys::Symbol...)
+    (match, driver) -> begin
+        vals = map(keys) do k
+            const_value(driver.constants, match.bindings[k])
+        end
+        all(!isnothing, vals) && allequal(vals)
     end
-    return nothing
 end
 
 const ALGEBRA_RULES = RewriteRule[
@@ -77,8 +64,8 @@ const ALGEBRA_RULES = RewriteRule[
     # (different SSA defs, same constant). Catches 1-based indexing patterns where
     # arange(N)+1 produces one broadcast(1) and gather's -1 produces another.
     # Generalizes MLIR's arith.addi/subi canonicalization for matching constants.
-    @rewrite(Intrinsics.subi(Intrinsics.addi(~x, ~c0), ~c1) => ~x, same_const)
-    @rewrite(Intrinsics.addi(Intrinsics.subi(~x, ~c0), ~c1) => ~x, same_const)
+    @rewrite(Intrinsics.subi(Intrinsics.addi(~x, ~c0), ~c1) => ~x, same_const(:c0, :c1))
+    @rewrite(Intrinsics.addi(Intrinsics.subi(~x, ~c0), ~c1) => ~x, same_const(:c0, :c1))
 ]
 
 algebra_pass!(sci::StructuredIRCode) = rewrite_patterns!(sci, ALGEBRA_RULES)
