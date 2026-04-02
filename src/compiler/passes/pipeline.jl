@@ -82,6 +82,13 @@ const ALGEBRA_RULES = RewriteRule[
              Intrinsics.reshape(~x, ~s), same_const(:c0, :c1))
     @rewrite(Intrinsics.addi(Intrinsics.reshape(Intrinsics.subi(~x, ~c0), ~s), ~c1) =>
              Intrinsics.reshape(~x, ~s), same_const(:c0, :c1))
+
+    # Nested cancellation through reshape: subi(reshape(addi(a, addi(b, c0))), c1)
+    # → reshape(addi(a, b)). Combines the nested and reshape-transparent cases.
+    @rewrite(Intrinsics.subi(Intrinsics.reshape(Intrinsics.addi(~a, Intrinsics.addi(~b, ~c0)), ~s), ~c1) =>
+             Intrinsics.reshape(Intrinsics.addi(~a, ~b), ~s), same_const(:c0, :c1))
+    @rewrite(Intrinsics.addi(Intrinsics.reshape(Intrinsics.subi(~a, Intrinsics.subi(~b, ~c0)), ~s), ~c1) =>
+             Intrinsics.reshape(Intrinsics.subi(~a, ~b), ~s), same_const(:c0, :c1))
 ]
 
 algebra_pass!(sci::StructuredIRCode) = rewrite_patterns!(sci, ALGEBRA_RULES)
