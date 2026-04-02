@@ -254,19 +254,19 @@ end
 @inline _combine_masks(::Nothing, b::Tile) = b
 @inline _combine_masks(::Nothing, ::Nothing) = nothing
 
-# 1D bounds mask: 0 <= index < size
+# 1D bounds mask: index < size (unsigned comparison catches negative indices)
+# After 1→0 index conversion, valid indices are >= 0. Reinterpreting as unsigned
+# makes negative values wrap to large values, so a single .< catches both cases.
 @inline function _bounds_mask_1d(indices_i32, array)
-    (indices_i32 .>= Tile(Int32(0))) .& (indices_i32 .< Tile(size(array, 1)))
+    reinterpret.(UInt32, indices_i32) .< reinterpret(UInt32, Int32(size(array, 1)))
 end
 
-# 2D bounds mask: 0 <= idx0 < size0 && 0 <= idx1 < size1
+# 2D bounds mask: idx0 < size0 && idx1 < size1 (unsigned)
 @inline function _bounds_mask_2d(idx0_i32, idx1_i32, array, S)
-    zero_0d = Tile(Int32(0))
-    zero_bc = broadcast_to(zero_0d, S)
-    size0_bc = broadcast_to(Tile(size(array, 1)), S)
-    size1_bc = broadcast_to(Tile(size(array, 2)), S)
-    mask0 = (idx0_i32 .>= zero_bc) .& (idx0_i32 .< size0_bc)
-    mask1 = (idx1_i32 .>= zero_bc) .& (idx1_i32 .< size1_bc)
+    size0_bc = broadcast_to(Tile(reinterpret(UInt32, Int32(size(array, 1)))), S)
+    size1_bc = broadcast_to(Tile(reinterpret(UInt32, Int32(size(array, 2)))), S)
+    mask0 = reinterpret.(UInt32, idx0_i32) .< size0_bc
+    mask1 = reinterpret.(UInt32, idx1_i32) .< size1_bc
     mask0 .& mask1
 end
 
