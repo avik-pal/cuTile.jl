@@ -177,7 +177,7 @@ end
         pid = ct.bid(1)
         ta = ct.load(a; index=(Int32(1), pid), shape=(64, 1))
         tb = ct.load(b; index=(Int32(1), pid), shape=(64, 1))
-        ct.@fpmode ct.Rounding.Approx flush_to_zero=true begin
+        ct.@fpmode rounding_mode=ct.Rounding.Approx flush_to_zero=true begin
             result = ta ./ tb
         end
         ct.store(c; index=(Int32(1), pid), tile=result)
@@ -199,7 +199,7 @@ end
         pid = ct.bid(1)
         ta = ct.load(a; index=(Int32(1), pid), shape=(64, 1))
         col_sum = sum(ta; dims=1)  # (1, 1)
-        ct.@fpmode ct.Rounding.Approx flush_to_zero=true begin
+        ct.@fpmode rounding_mode=ct.Rounding.Approx flush_to_zero=true begin
             result = ta ./ col_sum
         end
         ct.store(c; index=(Int32(1), pid), tile=result)

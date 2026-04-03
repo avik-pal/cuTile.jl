@@ -1179,7 +1179,7 @@ end
 =============================================================================#
 
 """
-    @fpmode [Rounding.X] [flush_to_zero=bool] begin ... end
+    @fpmode [rounding_mode=Rounding.X] [flush_to_zero=bool] begin ... end
 
 Set the floating-point mode for all FP operations in the block.
 Operations that support rounding mode and/or flush-to-zero will use the
@@ -1190,16 +1190,16 @@ Nested `@fpmode` blocks inherit unspecified fields from the outer scope.
 
 # Examples
 ```julia
-ct.@fpmode ct.Rounding.Approx flush_to_zero=true begin
-    acc = acc / l_i    # uses Approx rounding + FTZ
+ct.@fpmode rounding_mode=ct.Rounding.Approx flush_to_zero=true begin
+    acc = acc ./ l_i   # uses Approx rounding + FTZ
     p = exp2.(qk)      # uses FTZ
 end
 
 # Nesting: inner inherits FTZ from outer
-ct.@fpmode ct.Rounding.Approx flush_to_zero=true begin
-    x = a + b                        # Approx + FTZ
-    ct.@fpmode ct.Rounding.NearestEven begin
-        y = c + d                    # NearestEven + FTZ (inherited)
+ct.@fpmode rounding_mode=ct.Rounding.Approx flush_to_zero=true begin
+    x = a + b                                        # Approx + FTZ
+    ct.@fpmode rounding_mode=ct.Rounding.NearestEven begin
+        y = c + d                                    # NearestEven + FTZ (inherited)
     end
 end
 ```
@@ -1214,11 +1214,14 @@ macro fpmode(args...)
     flush_to_zero = nothing
 
     for arg in args[1:end-1]
-        if arg isa Expr && arg.head === :(=) && arg.args[1] === :flush_to_zero
+        arg isa Expr && arg.head === :(=) || error("@fpmode: expected key=val, got $arg")
+        key = arg.args[1]
+        if key === :flush_to_zero
             flush_to_zero = arg.args[2]
+        elseif key === :rounding_mode
+            rounding_mode = arg.args[2]
         else
-            # Rounding mode (e.g., Rounding.Approx or a variable)
-            rounding_mode = arg
+            error("@fpmode: unknown option '$key'; expected rounding_mode or flush_to_zero")
         end
     end
 

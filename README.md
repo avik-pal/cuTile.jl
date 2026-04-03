@@ -212,7 +212,7 @@ ct.scatter(arr, indices, tile; mask=active_mask)
 | `fma.(a, b, c)` | Fused multiply-add |
 | `abs.(tile)` | Absolute value |
 | `max(a, b)`, `min(a, b)` | Maximum/minimum (scalars) |
-| `ct.@fpmode ct.Rounding.Approx flush_to_zero=true begin ... end` | Scoped FP rounding mode and flush-to-zero |
+| `ct.@fpmode rounding_mode=ct.Rounding.Approx flush_to_zero=true begin ... end` | Scoped FP rounding mode and flush-to-zero |
 
 ### Comparison
 | Operation | Description |

@@ -129,7 +129,7 @@ function fmha_kernel(Q::ct.TileArray{T, 4}, K::ct.TileArray{T, 4},
 
     # Final normalization and store
     # acc is (TILE_D, TILE_M), l_i is (1, TILE_M)
-    ct.@fpmode ct.Rounding.Approx flush_to_zero=true begin
+    ct.@fpmode rounding_mode=ct.Rounding.Approx flush_to_zero=true begin
         acc = acc ./ l_i
     end
     acc = reshape(convert(ct.Tile{T}, acc), (TILE_D, TILE_M, 1, 1))
