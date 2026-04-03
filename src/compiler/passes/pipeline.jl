@@ -286,6 +286,7 @@ and subprogram compilation.
 """
 function run_passes!(sci::StructuredIRCode)
     canonicalize!(sci)
+    print_fusion_pass!(sci)
 
     constants = propagate_constants(sci)
     rewrite_patterns!(sci, OPTIMIZATION_RULES; constants)
