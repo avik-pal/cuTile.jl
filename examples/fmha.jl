@@ -105,11 +105,13 @@ function fmha_kernel(Q::ct.TileArray{T, 4}, K::ct.TileArray{T, 4},
         m_ij = max.(m_i, maximum(qk; dims=1) .* qk_scale)
         qk = qk .* qk_scale .- m_ij  # broadcasts (1, TILE_M) over dim 1
 
-        p = ct.exp2(qk; flush_to_zero=true)  # (TILE_N, TILE_M)
-        l_ij = sum(p; dims=1)  # (1, TILE_M)
-        alpha = ct.exp2(m_i .- m_ij; flush_to_zero=true)  # (1, TILE_M)
-        l_i = l_i .* alpha .+ l_ij
-        acc = acc .* alpha  # broadcasts (1, TILE_M) over (TILE_D, TILE_M)
+        ct.@fpmode flush_to_zero=true begin
+            p = exp2.(qk)                  # (TILE_N, TILE_M)
+            l_ij = sum(p; dims=1)          # (1, TILE_M)
+            alpha = exp2.(m_i .- m_ij)     # (1, TILE_M)
+            l_i = l_i .* alpha .+ l_ij
+            acc = acc .* alpha  # broadcasts (1, TILE_M) over (TILE_D, TILE_M)
+        end
 
         # PV product
         # V is (D_v, SeqLen_KV, KVH, Batch)
@@ -127,7 +129,9 @@ function fmha_kernel(Q::ct.TileArray{T, 4}, K::ct.TileArray{T, 4},
 
     # Final normalization and store
     # acc is (TILE_D, TILE_M), l_i is (1, TILE_M)
-    acc = ct.truediv(acc, l_i; flush_to_zero=true, rounding_mode=ct.Rounding.Approx)
+    ct.@fpmode ct.Rounding.Approx flush_to_zero=true begin
+        acc = acc ./ l_i
+    end
     acc = reshape(convert(ct.Tile{T}, acc), (TILE_D, TILE_M, 1, 1))
     ct.store(Out; index=(Int32(1), bid_x, head_idx, batch_idx), tile=acc)
 

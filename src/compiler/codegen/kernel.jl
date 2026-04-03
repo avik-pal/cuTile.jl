@@ -317,11 +317,12 @@ function emit_subprogram!(ctx::CGCtx, func, arg_types::Vector,
     # 2b. Run the pass pipeline on subprogram IR
     run_passes!(sci)
 
-    # 3. Create sub-context
+    # 3. Create sub-context (inherits active fpmode from caller)
     sub_ctx = CGCtx(; ctx.cb, ctx.tt, sci,
                       ctx.token_type,
                       ctx.type_cache, ctx.sm_arch,
                       ctx.cache)
+    append!(sub_ctx.fpmode_stack, ctx.fpmode_stack)
 
     # 4. Map arguments dynamically: ghost args get ghost_value, non-ghost args
     #    consume block_args sequentially.

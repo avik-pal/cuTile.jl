@@ -222,6 +222,21 @@ is_arg_ref(tv::CGVal) = tv.arg_ref !== nothing
 
 
 #=============================================================================
+ FPMode: Floating-point mode for rounding and flush-to-zero
+=============================================================================#
+
+"""
+    FPMode
+
+Active floating-point mode within an `@fpmode` scope. Tracks rounding mode
+and flush-to-zero settings that apply to FP operations during codegen.
+"""
+struct FPMode
+    rounding_mode::Union{RoundingMode.T, Nothing}
+    flush_to_zero::Bool
+end
+
+#=============================================================================
  CGCtx: Compilation context
 =============================================================================#
 
@@ -273,6 +288,9 @@ mutable struct CGCtx
 
     # Compilation cache (needed for combiner compilation)
     cache::CacheView
+
+    # Active floating-point mode stack (pushed/popped by @fpmode via fpmode_begin/end)
+    fpmode_stack::Vector{FPMode}
 end
 
 function CGCtx(; cb::CodeBuilder, tt::TypeTable, sci::StructuredIRCode,
@@ -297,7 +315,19 @@ function CGCtx(; cb::CodeBuilder, tt::TypeTable, sci::StructuredIRCode,
         type_cache,
         sm_arch,
         cache,
+        FPMode[],                        # fpmode_stack
     )
+end
+
+"""
+    current_fpmode(ctx::CGCtx) -> FPMode
+
+Return the active floating-point mode, or a default (no rounding, no FTZ)
+if no `@fpmode` scope is active.
+"""
+function current_fpmode(ctx::CGCtx)
+    isempty(ctx.fpmode_stack) && return FPMode(nothing, false)
+    return ctx.fpmode_stack[end]
 end
 
 

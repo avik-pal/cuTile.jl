@@ -65,7 +65,7 @@ include("tiled.jl")
 include("broadcast.jl")
 include("mapreduce.jl")
 
-public launch, Tiled, ByTarget, @compiler_options, @.
+public launch, Tiled, ByTarget, @compiler_options, @fpmode, @.
 launch(args...) = error("Please import CUDA.jl before using `cuTile.launch`.")
 
 end # module cuTile

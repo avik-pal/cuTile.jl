@@ -147,11 +147,13 @@ end
 end
 
 
-@testset "exp2 with flush_to_zero" begin
+@testset "@fpmode exp2 with flush_to_zero" begin
     function exp2_ftz_kernel(a::ct.TileArray{Float32, 1}, b::ct.TileArray{Float32, 1})
         pid = ct.bid(1)
         tile = ct.load(a, pid, (16,))
-        result = ct.exp2(tile; flush_to_zero=true)
+        ct.@fpmode flush_to_zero=true begin
+            result = exp2.(tile)
+        end
         ct.store(b, pid, result)
         return
     end
@@ -167,15 +169,17 @@ end
 end
 
 
-@testset "truediv" begin
+@testset "@fpmode division" begin
 
 @testset "same shape with ftz and rounding" begin
-    function truediv_kernel(a::ct.TileArray{Float32, 2}, b::ct.TileArray{Float32, 2},
-                            c::ct.TileArray{Float32, 2})
+    function fpmode_div_kernel(a::ct.TileArray{Float32, 2}, b::ct.TileArray{Float32, 2},
+                               c::ct.TileArray{Float32, 2})
         pid = ct.bid(1)
         ta = ct.load(a; index=(Int32(1), pid), shape=(64, 1))
         tb = ct.load(b; index=(Int32(1), pid), shape=(64, 1))
-        result = ct.truediv(ta, tb; flush_to_zero=true, rounding_mode=ct.Rounding.Approx)
+        ct.@fpmode ct.Rounding.Approx flush_to_zero=true begin
+            result = ta ./ tb
+        end
         ct.store(c; index=(Int32(1), pid), tile=result)
         return
     end
@@ -184,18 +188,20 @@ end
     a = CUDA.rand(Float32, m, n) .+ 1.0f0
     b = CUDA.rand(Float32, m, n) .+ 1.0f0
     c = CUDA.zeros(Float32, m, n)
-    ct.launch(truediv_kernel, n, a, b, c)
+    ct.launch(fpmode_div_kernel, n, a, b, c)
 
     @test Array(c) ≈ Array(a) ./ Array(b) rtol=1e-2
 end
 
 @testset "broadcasting" begin
-    function truediv_bcast_kernel(a::ct.TileArray{Float32, 2},
-                                  c::ct.TileArray{Float32, 2})
+    function fpmode_div_bcast_kernel(a::ct.TileArray{Float32, 2},
+                                     c::ct.TileArray{Float32, 2})
         pid = ct.bid(1)
         ta = ct.load(a; index=(Int32(1), pid), shape=(64, 1))
         col_sum = sum(ta; dims=1)  # (1, 1)
-        result = ct.truediv(ta, col_sum; flush_to_zero=true, rounding_mode=ct.Rounding.Approx)
+        ct.@fpmode ct.Rounding.Approx flush_to_zero=true begin
+            result = ta ./ col_sum
+        end
         ct.store(c; index=(Int32(1), pid), tile=result)
         return
     end
@@ -203,7 +209,7 @@ end
     m, n = 64, 32
     a = CUDA.rand(Float32, m, n) .+ 1.0f0
     c = CUDA.zeros(Float32, m, n)
-    ct.launch(truediv_bcast_kernel, n, a, c)
+    ct.launch(fpmode_div_bcast_kernel, n, a, c)
 
     a_cpu = Array(a)
     expected = a_cpu ./ sum(a_cpu; dims=1)
