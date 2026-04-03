@@ -70,5 +70,6 @@ include("intrinsics/memory.jl")
 include("intrinsics/atomics.jl")
 include("intrinsics/views.jl")
 include("intrinsics/misc.jl")
+include("intrinsics/fpmode.jl")
 
 include("intrinsics/julia.jl")

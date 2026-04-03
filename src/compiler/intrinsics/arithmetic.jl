@@ -20,18 +20,12 @@ function _broadcast_match_shapes!(cb, tt, lhs::CGVal, rhs::CGVal)
     return (lhs, rhs)
 end
 
-# Extract optional rounding_mode (arg 3) and flush_to_zero (arg 4) from intrinsic args.
-# User-facing RoundingMode module constants match the bytecode @enum RoundingMode values.
-function _extract_rounding_kwargs(ctx::CGCtx, args)
+# Build rounding_mode/flush_to_zero kwargs from the active @fpmode scope.
+function fpmode_kwargs(ctx::CGCtx)
+    mode = current_fpmode(ctx)
     kwargs = NamedTuple()
-    if length(args) >= 3
-        rm = @something get_constant(ctx, args[3]) nothing
-        rm isa Integer && (kwargs = (; kwargs..., rounding_mode=convert_enum(RoundingMode, rm)))
-    end
-    if length(args) >= 4
-        ftz = @something get_constant(ctx, args[4]) false
-        ftz === true && (kwargs = (; kwargs..., flush_to_zero=true))
-    end
+    mode.rounding_mode !== nothing && (kwargs = (; kwargs..., rounding_mode=mode.rounding_mode))
+    mode.flush_to_zero && (kwargs = (; kwargs..., flush_to_zero=true))
     kwargs
 end
 
@@ -268,11 +262,11 @@ function emit_intrinsic!(ctx::CGCtx, ::typeof(Intrinsics.absf), args)
 end
 
 # cuda_tile.addf
-@intrinsic addf(x::T, y::T, rounding_mode=nothing, flush_to_zero=false) where {T<:AbstractFloat}
-@intrinsic addf(a::Tile{T}, b::Tile{T}, rounding_mode=nothing, flush_to_zero=false) where {T<:AbstractFloat}
-tfunc(𝕃, ::typeof(Intrinsics.addf), @nospecialize args...) = CC.widenconst(args[1])
+@intrinsic addf(x::T, y::T) where {T<:AbstractFloat}
+@intrinsic addf(a::Tile{T}, b::Tile{T}) where {T<:AbstractFloat}
+tfunc(𝕃, ::typeof(Intrinsics.addf), @nospecialize(x), @nospecialize(y)) = CC.widenconst(x)
 function emit_intrinsic!(ctx::CGCtx, ::typeof(Intrinsics.addf), args)
-    @something try_const_fold(ctx, +, args) emit_binop!(ctx, args[1:2], encode_AddFOp!; _extract_rounding_kwargs(ctx, args)...)
+    @something try_const_fold(ctx, +, args) emit_binop!(ctx, args, encode_AddFOp!; fpmode_kwargs(ctx)...)
 end
 
 # cuda_tile.cmpf
@@ -309,19 +303,19 @@ function emit_intrinsic!(ctx::CGCtx, ::typeof(Intrinsics.cmpf), args)
 end
 
 # cuda_tile.divf
-@intrinsic divf(x::T, y::T, rounding_mode=nothing, flush_to_zero=false) where {T<:AbstractFloat}
-@intrinsic divf(a::Tile{T}, b::Tile{T}, rounding_mode=nothing, flush_to_zero=false) where {T<:AbstractFloat}
-tfunc(𝕃, ::typeof(Intrinsics.divf), @nospecialize args...) = CC.widenconst(args[1])
+@intrinsic divf(x::T, y::T) where {T<:AbstractFloat}
+@intrinsic divf(a::Tile{T}, b::Tile{T}) where {T<:AbstractFloat}
+tfunc(𝕃, ::typeof(Intrinsics.divf), @nospecialize(x), @nospecialize(y)) = CC.widenconst(x)
 function emit_intrinsic!(ctx::CGCtx, ::typeof(Intrinsics.divf), args)
-    @something try_const_fold(ctx, /, args) emit_binop!(ctx, args[1:2], encode_DivFOp!; _extract_rounding_kwargs(ctx, args)...)
+    @something try_const_fold(ctx, /, args) emit_binop!(ctx, args, encode_DivFOp!; fpmode_kwargs(ctx)...)
 end
 
 # cuda_tile.mulf
-@intrinsic mulf(x::T, y::T, rounding_mode=nothing, flush_to_zero=false) where {T<:AbstractFloat}
-@intrinsic mulf(a::Tile{T}, b::Tile{T}, rounding_mode=nothing, flush_to_zero=false) where {T<:AbstractFloat}
-tfunc(𝕃, ::typeof(Intrinsics.mulf), @nospecialize args...) = CC.widenconst(args[1])
+@intrinsic mulf(x::T, y::T) where {T<:AbstractFloat}
+@intrinsic mulf(a::Tile{T}, b::Tile{T}) where {T<:AbstractFloat}
+tfunc(𝕃, ::typeof(Intrinsics.mulf), @nospecialize(x), @nospecialize(y)) = CC.widenconst(x)
 function emit_intrinsic!(ctx::CGCtx, ::typeof(Intrinsics.mulf), args)
-    @something try_const_fold(ctx, *, args) emit_binop!(ctx, args[1:2], encode_MulFOp!; _extract_rounding_kwargs(ctx, args)...)
+    @something try_const_fold(ctx, *, args) emit_binop!(ctx, args, encode_MulFOp!; fpmode_kwargs(ctx)...)
 end
 
 # cuda_tile.negf
@@ -333,11 +327,11 @@ function emit_intrinsic!(ctx::CGCtx, ::typeof(Intrinsics.negf), args)
 end
 
 # cuda_tile.subf
-@intrinsic subf(x::T, y::T, rounding_mode=nothing, flush_to_zero=false) where {T<:AbstractFloat}
-@intrinsic subf(a::Tile{T}, b::Tile{T}, rounding_mode=nothing, flush_to_zero=false) where {T<:AbstractFloat}
-tfunc(𝕃, ::typeof(Intrinsics.subf), @nospecialize args...) = CC.widenconst(args[1])
+@intrinsic subf(x::T, y::T) where {T<:AbstractFloat}
+@intrinsic subf(a::Tile{T}, b::Tile{T}) where {T<:AbstractFloat}
+tfunc(𝕃, ::typeof(Intrinsics.subf), @nospecialize(x), @nospecialize(y)) = CC.widenconst(x)
 function emit_intrinsic!(ctx::CGCtx, ::typeof(Intrinsics.subf), args)
-    @something try_const_fold(ctx, -, args) emit_binop!(ctx, args[1:2], encode_SubFOp!; _extract_rounding_kwargs(ctx, args)...)
+    @something try_const_fold(ctx, -, args) emit_binop!(ctx, args, encode_SubFOp!; fpmode_kwargs(ctx)...)
 end
 
 
