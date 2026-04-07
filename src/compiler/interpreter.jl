@@ -14,14 +14,18 @@ This is necessary because NativeInterpreter has a fixed method_table type parame
 struct cuTileInterpreter <: CC.AbstractInterpreter
     cache::CacheView
     method_table::CC.CachedMethodTable{CC.OverlayMethodTable}
-    inf_cache::Vector{CC.InferenceResult}
+    inf_cache::@static isdefined(CC, :InferenceCache) ? CC.InferenceCache : Vector{CC.InferenceResult}
     inf_params::CC.InferenceParams
     opt_params::CC.OptimizationParams
 end
 
 function cuTileInterpreter(cache::CacheView; always_inline::Bool=true)
     method_table = get_method_table_view(cache.world)
-    inf_cache = Vector{CC.InferenceResult}()
+    @static if isdefined(CC, :InferenceCache)
+        inf_cache = CC.InferenceCache()
+    else
+        inf_cache = Vector{CC.InferenceResult}()
+    end
     inf_params = CC.InferenceParams()
     opt_params = if always_inline
         CC.OptimizationParams(; inline_cost_threshold=typemax(Int))
