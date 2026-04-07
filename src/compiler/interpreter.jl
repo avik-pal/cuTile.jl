@@ -241,6 +241,28 @@ else   # 1.11: synchronous, edges auto-tracked via stmt_edges
     end
 end
 
+# Force inlining of all functions with source code.
+#
+# Julia 1.13+ changed inlining cost storage to encode costs into a UInt8 via
+# jl_encode_inlining_cost. This lossy encoding saturates costs above ~5000 to
+# MAX_INLINE_COST, making functions permanently non-inlineable regardless of the
+# caller's inline_cost_threshold. Each cuTile intrinsic call is penalized at
+# inline_nonleaf_penalty (1000), so functions with ≥5 intrinsic calls hit the
+# ceiling.
+#
+# This override tells the inliner to always consider functions with available
+# source code as inlineable, matching the behavior that our typemax(Int)
+# inline_cost_threshold intends.
+@static if VERSION >= v"1.13-"
+    function CC.src_inlining_policy(interp::cuTileInterpreter,
+            @nospecialize(src), @nospecialize(info::CC.CallInfo), stmt_flag::UInt32)
+        isa(src, CC.OptimizationState) && (src = src.src)
+        isa(src, CC.MaybeCompressed) && return true
+        isa(src, CC.IRCode) && return true
+        return false
+    end
+end
+
 # Disable semi-concrete interpretation (broken with overlays per JuliaLang/julia#47349)
 function CC.concrete_eval_eligible(interp::cuTileInterpreter,
     @nospecialize(f), result::CC.MethodCallResult, arginfo::CC.ArgInfo, sv::CC.InferenceState)
