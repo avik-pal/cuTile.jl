@@ -131,6 +131,7 @@ function scalar_elim_block!(block::Block)
 
         current_type = value_type(inst)
         current_type === nothing && continue
+        is_token_type(current_type) && continue
         T = CC.widenconst(current_type)
         T <: Tile && continue     # already tile-typed
         T <: Number || continue   # only promote scalar number types
@@ -138,6 +139,7 @@ function scalar_elim_block!(block::Block)
         for op in ops
             op_type = value_type(block, op)
             op_type === nothing && continue
+            is_token_type(op_type) && continue
             OT = CC.widenconst(op_type)
             OT <: Tile || continue
             S = OT.parameters[2]
@@ -167,6 +169,7 @@ function scalar_elim_block!(block::Block)
     for inst in instructions(block)
         current_type = value_type(inst)
         current_type === nothing && continue
+        is_token_type(current_type) && continue
         new_type = promote_scalar_type(CC.widenconst(current_type))
         new_type === nothing && continue
         update_type!(block, inst, new_type)
@@ -175,6 +178,7 @@ function scalar_elim_block!(block::Block)
     # Phase 5: Promote block argument types (loop IVs, carries).
     # BlockArgument is immutable, so we create a new one and replace all uses.
     for (i, arg) in enumerate(block.args)
+        is_token_type(arg.type) && continue
         T = CC.widenconst(arg.type)
         T <: Tile && continue
         T <: Number || continue
