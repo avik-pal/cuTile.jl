@@ -240,9 +240,9 @@ function prepare(; benchmark::Bool=false,
     kv_heads = heads ÷ query_group_size
 
     # Julia layout: (D, SeqLen, Heads, Batch) — D contiguous
-    Q = T.((CUDA.rand(d_k, seq_q, heads, batch) .- 0.5f0))
-    K = T.((CUDA.rand(d_k, seq_kv, kv_heads, batch) .- 0.5f0))
-    V = T.((CUDA.rand(d_v, seq_kv, kv_heads, batch) .- 0.5f0))
+    Q = CUDA.rand(T, d_k, seq_q, heads, batch) .- T(0.5)
+    K = CUDA.rand(T, d_k, seq_kv, kv_heads, batch) .- T(0.5)
+    V = CUDA.rand(T, d_v, seq_kv, kv_heads, batch) .- T(0.5)
 
     return (;
         Q, K, V,

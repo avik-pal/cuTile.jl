@@ -327,11 +327,10 @@ function prepare(; benchmark::Bool=false,
                   intermediate_size::Int = benchmark ? 2048 : 1024,
                   topk::Int = 8,
                   T::DataType = Float16)
-    # Generate on GPU (Float32) then convert to avoid OOM from large Float64 intermediates
     # hidden_states is (hidden, num_tokens): hidden contiguous
-    hidden_states = T.(CUDA.rand(hidden_size, num_tokens) .- 0.5f0)
-    w1 = T.((CUDA.rand(hidden_size, intermediate_size * 2, num_experts) .- 0.5f0) .* 0.2f0)
-    w2 = T.((CUDA.rand(intermediate_size, hidden_size, num_experts) .- 0.5f0) .* 0.2f0)
+    hidden_states = CUDA.rand(T, hidden_size, num_tokens) .- T(0.5)
+    w1 = (CUDA.rand(T, hidden_size, intermediate_size * 2, num_experts) .- T(0.5)) .* T(0.2)
+    w2 = (CUDA.rand(T, intermediate_size, hidden_size, num_experts) .- T(0.5)) .* T(0.2)
 
     # Unique expert IDs per token (1-indexed)
     topk_ids = Matrix{Int}(undef, num_tokens, topk)
