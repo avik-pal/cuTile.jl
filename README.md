@@ -11,7 +11,7 @@ still change without notice.
 
 Install just like any other Julia package:
 
-```
+```julia-repl
 julia> using Pkg
 julia> Pkg.add("cuTile")
 ```
